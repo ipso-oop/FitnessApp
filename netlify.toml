@@ -1,5 +1,5 @@
 [functions]
-  external_node_modules = ["ejs","express", "mongodb", "serverless-http", "dotenv"]
+  external_node_modules = ["ejs","express", "mongodb", "express-session", "bcrypt", "dotenv", "path"]
   node_bundler = "esbuild"
   included_files = ["views/**/*"]
 
