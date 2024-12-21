@@ -1,6 +1,10 @@
 const express = require('express');
-const serverless = require('serverless-http');
+const session = require('express-session');
+const bcrypt = require('bcrypt');
+const dotenv = require('dotenv');
+const path = require('path');
 const { MongoClient, ObjectId } = require('mongodb');
+
 const app = express();
 
 // MongoDB Connection
@@ -27,69 +31,147 @@ async function connectToDatabase() {
   }
 }
 
+// View engine setup
+app.set('views', path.join(__dirname, 'views'));
+app.set('view engine', 'ejs');
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: process.env.NODE_ENV === 'production' }
+}));
 
-// Health check route
-app.get('/api', (req, res) => {
-  res.json({ message: 'API is running', environment: process.env.NODE_ENV });
-});
-
-// User routes
-app.get('/api/users', async (req, res) => {
-  try {
-    const db = await connectToDatabase();
-    const users = await db.collection('users').find({}).toArray();
-    res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+// Auth middleware
+const checkAuth = (req, res, next) => {
+  if (req.session.userId) {
+    next();
+  } else {
+    res.redirect('/login');
   }
+};
+
+// Routes
+app.get('/', (req, res) => {
+  res.render('index');
 });
 
-app.get('/api/users/:id', async (req, res) => {
-  try {
-    const db = await connectToDatabase();
-    const user = await db.collection('users').findOne({ 
-      _id: new ObjectId(req.params.id) 
-    });
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+app.get('/login', (req, res) => {
+  res.render('login');
+});
+
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  const db=connectToDatabase();
+  db.get('SELECT * FROM users WHERE email = ? OR username = ?', [username, username], async (err, user) => {
+    if (err) {
+      console.error('Database error:', err);
+      return res.render('login', { error: 'Database error' });
     }
-    res.json(user);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    
+    if (!user) {
+      console.log('Login attempt with non-existent username/email:', username);
+      return res.render('login', { error: 'User not found' });
+    }
+
+    const match = await bcrypt.compare(password, user.password);
+    if (match) {
+      req.session.userId = user.id;
+      console.log('Successful login for user:', user.username);
+      res.redirect('/dashboard');
+    } else {
+      console.log('Failed login attempt for user:', user.username);
+      res.render('login', { error: 'Invalid credentials' });
+    }
+  });
 });
 
-// Fitness data routes
-app.get('/api/users/:userId/fitness', async (req, res) => {
+app.get('/register', (req, res) => {
+  res.render('register');
+});
+
+app.post('/register', async (req, res) => {
   try {
-    const db = await connectToDatabase();
-    const fitnessData = await db.collection('fitness_data')
-      .find({ user_id: new ObjectId(req.params.userId) })
-      .toArray();
-    res.json(fitnessData);
+    const { email, password, username } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const db=connectToDatabase();
+    db.run('INSERT INTO users (email, password, username) VALUES (?, ?, ?)',
+      [email, hashedPassword, username],
+      (err) => {
+        if (err) {
+          return res.render('register', { error: 'Email already exists' });
+        }
+        res.redirect('/login');
+      }
+    );
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.render('register', { error: error.message });
   }
 });
 
-// Workout routes
-app.get('/api/fitness/:fitnessId/workouts', async (req, res) => {
-  try {
-    const db = await connectToDatabase();
-    const workouts = await db.collection('workouts')
-      .find({ fitness_data_id: new ObjectId(req.params.fitnessId) })
-      .toArray();
-    res.json(workouts);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+app.get('/dashboard', checkAuth, (req, res) => {
+  const db=connectToDatabase();
+  db.all(
+    `SELECT * FROM fitness_data WHERE user_id = ? ORDER BY date DESC`,
+    [req.session.userId],
+    (err, fitnessData) => {
+      if (err) {
+        return res.render('dashboard', { error: 'Database error', fitnessData: [] });
+      }
+      res.render('dashboard', { fitnessData });
+    }
+  );
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something broke!' });
+app.post('/logout', (req, res) => {
+  req.session.destroy();
+  res.redirect('/login');
 });
 
-module.exports.handler = serverless(app); 
+app.get('/debug/data', async (req, res) => {
+  const db=connectToDatabase();
+  db.serialize(() => {
+    db.all('SELECT * FROM users', [], (err, users) => {
+      db.all('SELECT * FROM fitness_data', [], (err, fitness) => {
+        db.all('SELECT * FROM workouts', [], (err, workouts) => {
+          res.json({
+            users: users.map(u => ({ ...u, password: undefined })), // Don't expose passwords
+            fitness_data: fitness,
+            workouts: workouts
+          });
+        });
+      });
+    });
+  });
+});
+
+app.post('/fitness/add', checkAuth, (req, res) => {
+  const { date, steps, calories, distance } = req.body;
+  const userId = req.session.userId;
+  const db=connectToDatabase();
+  db.run(
+    `INSERT INTO fitness_data (user_id, date, steps, calories, distance) 
+     VALUES (?, ?, ?, ?, ?)`,
+    [userId, date, parseInt(steps), parseInt(calories), parseFloat(distance)],
+    function(err) {
+      if (err) {
+        console.error('Error adding fitness data:', err);
+        return res.render('dashboard', { 
+          error: 'Error adding fitness data',
+          fitnessData: [] 
+        });
+      }
+
+      // Redirect back to dashboard to see updated data
+      res.redirect('/dashboard');
+    }
+  );
+});
+
+/*const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});*/
+
+module.exports = app;
