@@ -62,12 +62,15 @@ app.get('/login', (req, res) => {
 
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
-  const db=connectToDatabase();
-  db.get('SELECT * FROM users WHERE email = ? OR username = ?', [username, username], async (err, user) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.render('login', { error: 'Database error' });
-    }
+  try {
+    const db = await connectToDatabase();
+    // MongoDB syntax for finding a user
+    const user = await db.collection('users').findOne({
+      $or: [
+        { email: username },
+        { username: username }
+      ]
+    });
     
     if (!user) {
       console.log('Login attempt with non-existent username/email:', username);
@@ -76,14 +79,17 @@ app.post('/login', async (req, res) => {
 
     const match = await bcrypt.compare(password, user.password);
     if (match) {
-      req.session.userId = user.id;
+      req.session.userId = user._id; // MongoDB uses _id
       console.log('Successful login for user:', user.username);
       res.redirect('/dashboard');
     } else {
       console.log('Failed login attempt for user:', user.username);
       res.render('login', { error: 'Invalid credentials' });
     }
-  });
+  } catch (err) {
+    console.error('Database error:', err);
+    res.render('login', { error: 'Database error' });
+  }
 });
 
 app.get('/register', (req, res) => {
@@ -94,33 +100,38 @@ app.post('/register', async (req, res) => {
   try {
     const { email, password, username } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
-    const db=connectToDatabase();
-    db.run('INSERT INTO users (email, password, username) VALUES (?, ?, ?)',
-      [email, hashedPassword, username],
-      (err) => {
-        if (err) {
-          return res.render('register', { error: 'Email already exists' });
-        }
-        res.redirect('/login');
-      }
-    );
+    const db = await connectToDatabase();
+    
+    // MongoDB syntax
+    await db.collection('users').insertOne({
+      email,
+      password: hashedPassword,
+      username
+    });
+    
+    res.redirect('/login');
   } catch (error) {
+    // Check specifically for duplicate key error (email already exists)
+    if (error.code === 11000) {
+      return res.render('register', { error: 'Email already exists' });
+    }
     res.render('register', { error: error.message });
   }
 });
 
-app.get('/dashboard', checkAuth, (req, res) => {
-  const db=connectToDatabase();
-  db.all(
-    `SELECT * FROM fitness_data WHERE user_id = ? ORDER BY date DESC`,
-    [req.session.userId],
-    (err, fitnessData) => {
-      if (err) {
-        return res.render('dashboard', { error: 'Database error', fitnessData: [] });
-      }
-      res.render('dashboard', { fitnessData });
-    }
-  );
+app.get('/dashboard', checkAuth, async (req, res) => {
+  try {
+    const db = await connectToDatabase();
+    const fitnessData = await db.collection('fitness_data')
+      .find({ user_id: new ObjectId(req.session.userId) })
+      .sort({ date: -1 })
+      .toArray();
+    
+    res.render('dashboard', { fitnessData });
+  } catch (err) {
+    console.error('Database error:', err);
+    res.render('dashboard', { error: 'Database error', fitnessData: [] });
+  }
 });
 
 app.post('/logout', (req, res) => {
@@ -129,43 +140,47 @@ app.post('/logout', (req, res) => {
 });
 
 app.get('/debug/data', async (req, res) => {
-  const db=connectToDatabase();
-  db.serialize(() => {
-    db.all('SELECT * FROM users', [], (err, users) => {
-      db.all('SELECT * FROM fitness_data', [], (err, fitness) => {
-        db.all('SELECT * FROM workouts', [], (err, workouts) => {
-          res.json({
-            users: users.map(u => ({ ...u, password: undefined })), // Don't expose passwords
-            fitness_data: fitness,
-            workouts: workouts
-          });
-        });
-      });
+  try {
+    const db = await connectToDatabase();
+    const [users, fitnessData, workouts] = await Promise.all([
+      db.collection('users').find({}).toArray(),
+      db.collection('fitness_data').find({}).toArray(),
+      db.collection('workouts').find({}).toArray()
+    ]);
+
+    res.json({
+      users: users.map(u => ({ ...u, password: undefined })), // Don't expose passwords
+      fitness_data: fitnessData,
+      workouts: workouts
     });
-  });
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
-app.post('/fitness/add', checkAuth, (req, res) => {
+app.post('/fitness/add', checkAuth, async (req, res) => {
   const { date, steps, calories, distance } = req.body;
   const userId = req.session.userId;
-  const db=connectToDatabase();
-  db.run(
-    `INSERT INTO fitness_data (user_id, date, steps, calories, distance) 
-     VALUES (?, ?, ?, ?, ?)`,
-    [userId, date, parseInt(steps), parseInt(calories), parseFloat(distance)],
-    function(err) {
-      if (err) {
-        console.error('Error adding fitness data:', err);
-        return res.render('dashboard', { 
-          error: 'Error adding fitness data',
-          fitnessData: [] 
-        });
-      }
+  
+  try {
+    const db = await connectToDatabase();
+    await db.collection('fitness_data').insertOne({
+      user_id: new ObjectId(userId),
+      date: new Date(date),
+      steps: parseInt(steps),
+      calories: parseInt(calories),
+      distance: parseFloat(distance)
+    });
 
-      // Redirect back to dashboard to see updated data
-      res.redirect('/dashboard');
-    }
-  );
+    res.redirect('/dashboard');
+  } catch (err) {
+    console.error('Error adding fitness data:', err);
+    res.render('dashboard', { 
+      error: 'Error adding fitness data',
+      fitnessData: [] 
+    });
+  }
 });
 
 /*const PORT = process.env.PORT || 3000;
