@@ -1,7 +1,7 @@
-[build]
-  functions = "netlify/functions"
-  publish = "public"
-
+[functions]
+  external_node_modules = ["ejs","express", "mongodb", "serverless-http", "dotenv"]
+  node_bundler = "esbuild"
+  included_files = ["views/**/*"]
 
 [[redirects]]
   from = "/*"
