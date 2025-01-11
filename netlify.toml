@@ -1,14 +1,3 @@
-[build]
-  command = "npm run build"
-  functions = "netlify/functions"
-  publish = "public"
-
-[context.production.environment]
-  NODE_ENV = "production"
-
-[context.development.environment]
-  NODE_ENV = "development"
-
 [functions]
   external_node_modules = ["ejs","express", "mongodb", "express-session", "bcrypt", "dotenv", "path"]
   node_bundler = "esbuild"
