@@ -22,10 +22,7 @@ async function connectToDatabase() {
   }
   
   try {
-    const client = await MongoClient.connect(uri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    const client = await MongoClient.connect(uri);
     const db = client.db(process.env.MONGODB_DB_NAME || 'fitness_db');
     cachedDb = db;
     console.log('Successfully connected to MongoDB.');
