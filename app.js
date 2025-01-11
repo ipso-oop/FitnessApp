@@ -5,6 +5,11 @@ const dotenv = require('dotenv');
 const path = require('path');
 const { MongoClient, ObjectId } = require('mongodb');
 
+// Lade .env Datei für lokale Entwicklung
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
+
 const app = express();
 
 // MongoDB Connection
@@ -29,6 +34,12 @@ async function connectToDatabase() {
     console.error('MongoDB connection error:', error);
     throw error;
   }
+}
+
+// Nach der MongoDB Connection-Funktion
+if (!process.env.MONGODB_URI) {
+  console.error('MONGODB_URI ist nicht definiert!');
+  process.exit(1);
 }
 
 // View engine setup
@@ -182,6 +193,17 @@ app.post('/fitness/add', checkAuth, async (req, res) => {
     });
   }
 });
+
+// Nur für Entwicklungszwecke
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/env-test', (req, res) => {
+    res.json({
+      mongodb_uri: process.env.MONGODB_URI ? 'Definiert' : 'Nicht definiert',
+      node_env: process.env.NODE_ENV,
+      db_name: process.env.MONGODB_DB_NAME
+    });
+  });
+}
 
 /*const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
