@@ -1,4 +1,4 @@
- FitnessApp
+# FitnessApp
 
 FitnessApp is a web application designed to help users track their fitness data, including steps, calories, and distance. The application uses MongoDB for data storage and Express.js for the server-side framework. The app also includes user authentication and session management.
 
