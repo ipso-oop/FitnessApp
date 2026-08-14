@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Emoji Letter Studio",
+    "slug": "emoji-letter-studio",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#111827"
+      }
+    }
+  }
+}
