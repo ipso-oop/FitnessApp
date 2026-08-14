@@ -1,9 +1,0 @@
-[functions]
-  external_node_modules = ["ejs","express", "mongodb", "express-session", "bcrypt", "dotenv", "path"]
-  node_bundler = "esbuild"
-  included_files = ["views/**/*"]
-
-[[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/api/:splat"
-  status = 200
