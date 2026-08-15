@@ -8,11 +8,13 @@ import { SaveConverterSettingsUseCase } from '../domain/usecases/SaveConverterSe
 import { SetConversionModeUseCase } from '../domain/usecases/SetConversionModeUseCase';
 import { SetGlobalEmojiUseCase } from '../domain/usecases/SetGlobalEmojiUseCase';
 import { UpdateLetterEmojiUseCase } from '../domain/usecases/UpdateLetterEmojiUseCase';
+import { BitmapLetterFont } from '../data/fonts/BitmapLetterFont';
 import { AsyncStorageConverterSettingsRepository } from '../data/repositories/AsyncStorageConverterSettingsRepository';
 import { StaticEmojiCatalogRepository } from '../data/repositories/StaticEmojiCatalogRepository';
 import { MathRandomSource } from '../data/services/MathRandomSource';
 import type { ConverterSettingsRepository } from '../domain/repositories/ConverterSettingsRepository';
 import type { EmojiCatalogRepository } from '../domain/repositories/EmojiCatalogRepository';
+import type { LetterFontRepository } from '../domain/repositories/LetterFontRepository';
 import type { RandomSource } from '../domain/services/RandomSource';
 
 export type AppContainer = {
@@ -34,17 +36,19 @@ export function createAppContainer(
     catalog?: EmojiCatalogRepository;
     settingsRepository?: ConverterSettingsRepository;
     randomSource?: RandomSource;
+    font?: LetterFontRepository;
   } = {},
 ): AppContainer {
   const catalog = overrides.catalog ?? new StaticEmojiCatalogRepository();
   const randomSource = overrides.randomSource ?? new MathRandomSource();
+  const font = overrides.font ?? new BitmapLetterFont();
   const settingsRepository =
     overrides.settingsRepository ??
     new AsyncStorageConverterSettingsRepository(catalog);
 
   return {
     catalog,
-    convertText: new ConvertTextToEmojisUseCase(catalog, randomSource),
+    convertText: new ConvertTextToEmojisUseCase(catalog, randomSource, font),
     getCatalog: new GetEmojiCatalogUseCase(catalog),
     loadSettings: new LoadConverterSettingsUseCase(settingsRepository),
     saveSettings: new SaveConverterSettingsUseCase(settingsRepository),

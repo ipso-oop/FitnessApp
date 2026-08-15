@@ -1,8 +1,14 @@
 import { ConversionModes } from '../entities/conversionMode';
+import { toOutputString } from '../entities/conversionResult';
 import { GlyphKinds } from '../entities/glyph';
 import { SequenceRandomSource } from '../../data/services/MathRandomSource';
 import { ConvertTextToEmojisUseCase } from './ConvertTextToEmojisUseCase';
-import { createTestCatalog, createTestSettings, mappingFor } from '../test/fixtures';
+import {
+  createTestCatalog,
+  createTestFont,
+  createTestSettings,
+  mappingFor,
+} from '../test/fixtures';
 
 function createUseCase(sequence: number[] = [0, 1, 2, 0]) {
   const catalog = createTestCatalog();
@@ -11,12 +17,18 @@ function createUseCase(sequence: number[] = [0, 1, 2, 0]) {
     useCase: new ConvertTextToEmojisUseCase(
       catalog,
       new SequenceRandomSource(sequence),
+      createTestFont(),
     ),
   };
 }
 
-describe('ConvertTextToEmojisUseCase', () => {
+function filledGlyphs(result: ReturnType<ConvertTextToEmojisUseCase['execute']>) {
+  return result.glyphs.map((glyph) =>
+    glyph.pixels.flat().filter((pixel) => pixel.filled).map((pixel) => pixel.emoji?.glyph),
+  );
+}
 
+describe('ConvertTextToEmojisUseCase', () => {
   it('returns an empty glyph list for empty text', () => {
     const { catalog, useCase } = createUseCase();
     const result = useCase.execute('', createTestSettings(catalog));
@@ -24,28 +36,43 @@ describe('ConvertTextToEmojisUseCase', () => {
     expect(result.sourceText).toBe('');
   });
 
-  it('converts letters with the per-letter mapping', () => {
+  it('draws each letter as a pixel pattern with the mapped emoji', () => {
     const { catalog, useCase } = createUseCase();
     const settings = createTestSettings(catalog, {
       mode: ConversionModes.PerLetter,
-      letterMappings: mappingFor(catalog, { h: 'heart', a: 'star', l: 'fire', o: 'heart' }),
+      letterMappings: mappingFor(catalog, {
+        h: 'heart',
+        a: 'star',
+        l: 'fire',
+        o: 'heart',
+      }),
     });
 
     const result = useCase.execute('Hallo', settings);
 
-    expect(result.glyphs.map((glyph) => glyph.display)).toEqual([
-      '❤️',
-      '⭐',
-      '🔥',
-      '🔥',
-      '❤️',
-    ]);
-    expect(result.glyphs.every((glyph) => glyph.kind === GlyphKinds.Emoji)).toBe(
+    expect(result.glyphs.every((glyph) => glyph.kind === GlyphKinds.Letter)).toBe(
       true,
     );
+    expect(filledGlyphs(result)).toEqual([
+      ['❤️', '❤️'],
+      ['⭐', '⭐'],
+      ['🔥', '🔥'],
+      ['🔥', '🔥'],
+      ['❤️', '❤️'],
+    ]);
+    expect(result.glyphs[0]?.pixels).toEqual([
+      [
+        expect.objectContaining({ filled: true, emoji: catalog.getById('heart') }),
+        expect.objectContaining({ filled: false, emoji: null }),
+      ],
+      [
+        expect.objectContaining({ filled: false, emoji: null }),
+        expect.objectContaining({ filled: true, emoji: catalog.getById('heart') }),
+      ],
+    ]);
   });
 
-  it('uses one global emoji for every letter', () => {
+  it('uses one global emoji as ink for every letter', () => {
     const { catalog, useCase } = createUseCase();
     const settings = createTestSettings(catalog, {
       mode: ConversionModes.Global,
@@ -54,42 +81,55 @@ describe('ConvertTextToEmojisUseCase', () => {
 
     const result = useCase.execute('Hi', settings);
 
-    expect(result.glyphs.map((glyph) => glyph.display)).toEqual(['🔥', '🔥']);
+    expect(filledGlyphs(result)).toEqual([
+      ['🔥', '🔥'],
+      ['🔥', '🔥'],
+    ]);
   });
 
-  it('picks a new random emoji for each letter', () => {
-    const { catalog, useCase } = createUseCase([0, 1, 2]);
+  it('paints each filled pixel with a random emoji', () => {
+    const { catalog, useCase } = createUseCase([0, 1, 2, 0]);
     const settings = createTestSettings(catalog, {
       mode: ConversionModes.Random,
     });
 
-    const result = useCase.execute('abc', settings);
+    const result = useCase.execute('ab', settings);
 
-    expect(result.glyphs.map((glyph) => glyph.display)).toEqual(['⭐', '❤️', '🔥']);
+    expect(filledGlyphs(result)).toEqual([
+      ['⭐', '❤️'],
+      ['🔥', '⭐'],
+    ]);
   });
 
-  it('keeps spaces, newlines, and punctuation', () => {
+  it('keeps spaces, newlines, and unknown characters', () => {
     const { catalog, useCase } = createUseCase();
     const settings = createTestSettings(catalog, {
       mode: ConversionModes.Global,
       globalEmoji: catalog.getById('star')!,
     });
 
-    const result = useCase.execute('A B\n!', settings);
+    const result = useCase.execute('A B\n#', settings);
 
     expect(result.glyphs.map((glyph) => glyph.kind)).toEqual([
-      GlyphKinds.Emoji,
+      GlyphKinds.Letter,
       GlyphKinds.Space,
-      GlyphKinds.Emoji,
+      GlyphKinds.Letter,
       GlyphKinds.Newline,
       GlyphKinds.Passthrough,
     ]);
-    expect(result.glyphs.map((glyph) => glyph.display)).toEqual([
-      '⭐',
-      ' ',
-      '⭐',
-      '\n',
-      '!',
-    ]);
+    expect(result.lines).toHaveLength(2);
+    expect(result.glyphs[4]?.source).toBe('#');
+  });
+
+  it('renders copyable multi-line emoji letter art', () => {
+    const { catalog, useCase } = createUseCase();
+    const settings = createTestSettings(catalog, {
+      mode: ConversionModes.Global,
+      globalEmoji: catalog.getById('star')!,
+    });
+
+    const output = toOutputString(useCase.execute('A', settings));
+
+    expect(output).toBe('⭐  \n  ⭐');
   });
 });

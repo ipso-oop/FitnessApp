@@ -1,17 +1,23 @@
 import type { ConverterSettings } from '../entities/converterSettings';
-import type { ConversionResult } from '../entities/conversionResult';
+import {
+  groupGlyphsIntoLines,
+  type ConversionResult,
+} from '../entities/conversionResult';
 import { ConversionModes } from '../entities/conversionMode';
 import type { Emoji } from '../entities/emoji';
 import type { Glyph } from '../entities/glyph';
-import { GlyphKinds } from '../entities/glyph';
+import { GlyphKinds, paintPattern } from '../entities/glyph';
+import type { LetterPattern } from '../entities/letterPattern';
 import { toMappableKey } from '../entities/letterKey';
 import type { EmojiCatalogRepository } from '../repositories/EmojiCatalogRepository';
+import type { LetterFontRepository } from '../repositories/LetterFontRepository';
 import type { RandomSource } from '../services/RandomSource';
 
 export class ConvertTextToEmojisUseCase {
   constructor(
     private readonly catalog: EmojiCatalogRepository,
     private readonly randomSource: RandomSource,
+    private readonly font: LetterFontRepository,
   ) {}
 
   execute(text: string, settings: ConverterSettings): ConversionResult {
@@ -22,6 +28,7 @@ export class ConvertTextToEmojisUseCase {
     return {
       sourceText: text,
       glyphs,
+      lines: groupGlyphsIntoLines(glyphs),
       mode: settings.mode,
     };
   }
@@ -35,60 +42,92 @@ export class ConvertTextToEmojisUseCase {
       return {
         index,
         source: character,
-        display: '\n',
         kind: GlyphKinds.Newline,
         mappableKey: null,
-        emoji: null,
+        pattern: null,
+        pixels: [],
       };
     }
 
     if (/\s/u.test(character)) {
-      return {
+      return this.drawGlyph({
         index,
         source: character,
-        display: ' ',
         kind: GlyphKinds.Space,
         mappableKey: null,
-        emoji: null,
-      };
+        pattern: this.font.getSpacePattern(),
+        settings,
+      });
     }
 
     const mappableKey = toMappableKey(character);
-    if (!mappableKey) {
-      return {
+    if (mappableKey) {
+      return this.drawGlyph({
         index,
         source: character,
-        display: character,
-        kind: GlyphKinds.Passthrough,
-        mappableKey: null,
-        emoji: null,
-      };
+        kind: GlyphKinds.Letter,
+        mappableKey,
+        pattern: this.font.getPattern(mappableKey),
+        settings,
+      });
     }
 
-    const emoji = this.resolveEmoji(mappableKey, settings);
+    const punctuation = this.font.findPattern(character);
+    if (punctuation) {
+      return this.drawGlyph({
+        index,
+        source: character,
+        kind: GlyphKinds.Letter,
+        mappableKey: null,
+        pattern: punctuation,
+        settings,
+      });
+    }
+
     return {
       index,
       source: character,
-      display: emoji.glyph,
-      kind: GlyphKinds.Emoji,
-      mappableKey,
-      emoji,
+      kind: GlyphKinds.Passthrough,
+      mappableKey: null,
+      pattern: null,
+      pixels: [],
     };
   }
 
-  private resolveEmoji(
-    key: NonNullable<ReturnType<typeof toMappableKey>>,
+  private drawGlyph(input: {
+    index: number;
+    source: string;
+    kind: Glyph['kind'];
+    mappableKey: Glyph['mappableKey'];
+    pattern: LetterPattern;
+    settings: ConverterSettings;
+  }): Glyph {
+    const ink = this.resolveInk(input.mappableKey, input.settings);
+
+    return {
+      index: input.index,
+      source: input.source,
+      kind: input.kind,
+      mappableKey: input.mappableKey,
+      pattern: input.pattern,
+      pixels: paintPattern(input.pattern, ink),
+    };
+  }
+
+  private resolveInk(
+    key: Glyph['mappableKey'],
     settings: ConverterSettings,
-  ): Emoji {
-    if (settings.mode === ConversionModes.Global) {
-      return settings.globalEmoji;
-    }
-
+  ): (filledIndex: number) => Emoji {
     if (settings.mode === ConversionModes.Random) {
-      return this.pickRandomEmoji();
+      return () => this.pickRandomEmoji();
     }
 
-    return settings.letterMappings.get(key) ?? settings.globalEmoji;
+    if (settings.mode === ConversionModes.Global || !key) {
+      return () => settings.globalEmoji;
+    }
+
+    const mapped = settings.letterMappings.get(key) ?? settings.globalEmoji;
+    return () => mapped;
   }
 
   private pickRandomEmoji(): Emoji {

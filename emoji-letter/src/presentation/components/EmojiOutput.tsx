@@ -1,7 +1,8 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ConversionModes } from '../../domain/entities/conversionMode';
 import type { ConversionResult } from '../../domain/entities/conversionResult';
+import type { Glyph } from '../../domain/entities/glyph';
 import { GlyphKinds } from '../../domain/entities/glyph';
 import type { MappableKey } from '../../domain/entities/letterKey';
 import { strings } from '../i18n/strings';
@@ -21,45 +22,83 @@ export function EmojiOutput({ result, onGlyphPress }: EmojiOutputProps) {
       {isEmpty ? (
         <Text style={styles.empty}>{strings.outputEmpty}</Text>
       ) : (
-        <View style={styles.wrap}>
-          {result.glyphs.map((glyph) => {
-            if (glyph.kind === GlyphKinds.Newline) {
-              return <View key={glyph.index} style={styles.newline} />;
-            }
-
-            if (glyph.kind === GlyphKinds.Space) {
-              return <View key={glyph.index} style={styles.space} />;
-            }
-
-            const canEdit =
-              result.mode === ConversionModes.PerLetter &&
-              glyph.mappableKey !== null;
-
-            return (
-              <Pressable
-                key={glyph.index}
-                disabled={!canEdit}
-                onPress={() => {
-                  if (glyph.mappableKey) {
-                    onGlyphPress(glyph.mappableKey);
+        <View style={styles.lines}>
+          {result.lines.map((line, lineIndex) => (
+            <ScrollView
+              key={`line-${lineIndex}`}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.line}
+            >
+              {line.map((glyph) => (
+                <DrawnGlyph
+                  key={glyph.index}
+                  glyph={glyph}
+                  canEdit={
+                    result.mode === ConversionModes.PerLetter &&
+                    glyph.mappableKey !== null
                   }
-                }}
-                accessibilityRole={canEdit ? 'button' : 'text'}
-                accessibilityLabel={`${glyph.source} ${glyph.display}`}
-                style={({ pressed }) => [
-                  styles.glyph,
-                  canEdit && pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.emoji}>{glyph.display}</Text>
-              </Pressable>
-            );
-          })}
+                  onPress={() => {
+                    if (glyph.mappableKey) {
+                      onGlyphPress(glyph.mappableKey);
+                    }
+                  }}
+                />
+              ))}
+            </ScrollView>
+          ))}
         </View>
       )}
     </View>
   );
 }
+
+type DrawnGlyphProps = {
+  glyph: Glyph;
+  canEdit: boolean;
+  onPress: () => void;
+};
+
+function DrawnGlyph({ glyph, canEdit, onPress }: DrawnGlyphProps) {
+  if (glyph.kind === GlyphKinds.Space) {
+    return <View style={styles.space} />;
+  }
+
+  if (glyph.kind === GlyphKinds.Passthrough) {
+    return (
+      <View style={styles.passthrough}>
+        <Text style={styles.passthroughText}>{glyph.source}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <Pressable
+      disabled={!canEdit}
+      onPress={onPress}
+      accessibilityRole={canEdit ? 'button' : 'text'}
+      accessibilityLabel={strings.letterArtLabel(glyph.source)}
+      style={({ pressed }) => [
+        styles.letter,
+        canEdit && pressed && styles.pressed,
+      ]}
+    >
+      {glyph.pixels.map((row, rowIndex) => (
+        <View key={rowIndex} style={styles.row}>
+          {row.map((pixel, column) => (
+            <View key={`${rowIndex}-${column}`} style={styles.cell}>
+              <Text style={styles.pixel}>
+                {pixel.filled && pixel.emoji ? pixel.emoji.glyph : ' '}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </Pressable>
+  );
+}
+
+const PIXEL_SIZE = 16;
 
 const styles = StyleSheet.create({
   card: {
@@ -68,7 +107,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
-    minHeight: 140,
+    minHeight: 160,
     gap: spacing.sm,
   },
   label: {
@@ -82,27 +121,47 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
   },
-  wrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
+  lines: {
+    gap: spacing.md,
   },
-  glyph: {
-    paddingHorizontal: 2,
-    paddingVertical: 2,
+  line: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingRight: spacing.md,
+  },
+  letter: {
+    padding: 2,
   },
   pressed: {
     opacity: 0.7,
   },
-  emoji: {
-    ...typography.emoji,
+  row: {
+    flexDirection: 'row',
+  },
+  cell: {
+    width: PIXEL_SIZE,
+    height: PIXEL_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pixel: {
+    fontSize: 12,
+    lineHeight: PIXEL_SIZE,
   },
   space: {
-    width: 14,
-    height: 32,
+    width: 18,
+    height: PIXEL_SIZE * 7,
   },
-  newline: {
-    width: '100%',
-    height: 8,
+  passthrough: {
+    minWidth: PIXEL_SIZE,
+    height: PIXEL_SIZE * 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  passthroughText: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '700',
   },
 });
